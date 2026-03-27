@@ -1,9 +1,11 @@
 package com.lxrin.ql.condition;
 
+import com.lxrin.ql.table.Column;
+
 /**
  * Static factory methods for building SQL {@link Condition}s.
  *
- * <h2>Usage (static import)</h2>
+ * <h2>Usage with raw strings (static import)</h2>
  * <pre>{@code
  * import static com.lxrin.ql.condition.Conditions.*;
  *
@@ -11,6 +13,18 @@ package com.lxrin.ql.condition;
  *     .from("MY_TABLE t")
  *     .select("t.ID", "id")
  *     .where(eq("t.STATUS", ":status"), and(), gt("t.AGE", ":minAge"))
+ *     .bind("status", "ACTIVE")
+ *     .bind("minAge", 18)
+ *     .multiple();
+ * }</pre>
+ *
+ * <h2>Usage with {@link Column} (recommended)</h2>
+ * <pre>{@code
+ * PersonTable p = new PersonTable();
+ * createContribution(PersonBean.class)
+ *     .from(p)
+ *     .select(p.id)
+ *     .where(eq(p.status, ":status"), and(), gt(p.age, ":minAge"))
  *     .bind("status", "ACTIVE")
  *     .bind("minAge", 18)
  *     .multiple();
@@ -87,6 +101,46 @@ public final class Conditions {
     public static Condition isNotNull(String column) {
         return new NullCondition(column, false);
     }
+
+    // -------------------------------------------------------------------------
+    // Column-based overloads (use with TableDef columns)
+    // -------------------------------------------------------------------------
+
+    /** {@link Column} overload for {@link #eq(String, String)}. */
+    public static Condition eq(Column column, String value)   { return eq(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #ne(String, String)}. */
+    public static Condition ne(Column column, String value)   { return ne(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #gt(String, String)}. */
+    public static Condition gt(Column column, String value)   { return gt(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #lt(String, String)}. */
+    public static Condition lt(Column column, String value)   { return lt(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #ge(String, String)}. */
+    public static Condition ge(Column column, String value)   { return ge(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #le(String, String)}. */
+    public static Condition le(Column column, String value)   { return le(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #like(String, String)}. */
+    public static Condition like(Column column, String value) { return like(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #ilike(String, String)}. */
+    public static Condition ilike(Column column, String value){ return ilike(column.toSql(), value); }
+
+    /** {@link Column} overload for {@link #in(String, String...)}. */
+    public static Condition in(Column column, String... values) { return in(column.toSql(), values); }
+
+    /** {@link Column} overload for {@link #between(String, String, String)}. */
+    public static Condition between(Column column, String from, String to) { return between(column.toSql(), from, to); }
+
+    /** {@link Column} overload for {@link #isNull(String)}. */
+    public static Condition isNull(Column column)    { return isNull(column.toSql()); }
+
+    /** {@link Column} overload for {@link #isNotNull(String)}. */
+    public static Condition isNotNull(Column column) { return isNotNull(column.toSql()); }
 
     // -------------------------------------------------------------------------
     // Logical operators

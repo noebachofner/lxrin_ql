@@ -1,9 +1,12 @@
 package com.lxrin.ql;
 
 import com.lxrin.ql.bind.BindMap;
+import com.lxrin.ql.bind.Binds;
 import com.lxrin.ql.condition.Condition;
 import com.lxrin.ql.sql.ISqlExecutor;
 import com.lxrin.ql.sql.ScoutSqlExecutor;
+import com.lxrin.ql.table.Column;
+import com.lxrin.ql.table.TableDef;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -66,11 +69,32 @@ public class QueryBuilder<T> {
     // -------------------------------------------------------------------------
 
     /**
+     * Sets the primary FROM table using a {@link TableDef}.
+     * The SQL fragment is derived from {@link TableDef#toFromSql()}.
+     *
+     * @param tableDef table definition, e.g. {@code new ProductTable()}
+     */
+    public QueryBuilder<T> from(TableDef tableDef) {
+        return from(tableDef.toFromSql());
+    }
+
+    /**
      * Sets the primary FROM table / expression (e.g. {@code "MY_TABLE t"}).
      */
     public QueryBuilder<T> from(String table) {
         this.table = table;
         return this;
+    }
+
+    /**
+     * Adds a {@link Column} to the SELECT list.
+     * Uses {@link Column#toSql()} as the SQL expression and
+     * {@link Column#getAlias()} as the result alias.
+     *
+     * @param column column reference from a {@link TableDef}
+     */
+    public QueryBuilder<T> select(Column column) {
+        return select(column.toSql(), column.getAlias());
     }
 
     /**
@@ -102,6 +126,19 @@ public class QueryBuilder<T> {
      */
     public QueryBuilder<T> where(Condition... conditions) {
         this.conditions.addAll(Arrays.asList(conditions));
+        return this;
+    }
+
+    /**
+     * Merges all parameters from a {@link Binds} instance into this builder.
+     * Existing parameters with the same name are overwritten.
+     *
+     * @param binds typed bind parameters
+     */
+    public QueryBuilder<T> bind(Binds binds) {
+        for (java.util.Map.Entry<String, Object> e : binds.asMap().entrySet()) {
+            this.binds = this.binds.put(e.getKey(), e.getValue());
+        }
         return this;
     }
 

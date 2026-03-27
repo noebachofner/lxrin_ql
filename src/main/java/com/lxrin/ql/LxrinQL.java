@@ -2,6 +2,7 @@ package com.lxrin.ql;
 
 import com.lxrin.ql.condition.Condition;
 import com.lxrin.ql.condition.Conditions;
+import com.lxrin.ql.table.Column;
 
 /**
  * Main entry point for the <strong>LxrinQL</strong> query-builder library.
@@ -134,6 +135,46 @@ public final class LxrinQL {
 
     /** @see Conditions#isNotNull(String) */
     public static Condition isNotNull(String column) { return Conditions.isNotNull(column); }
+
+    // -------------------------------------------------------------------------
+    // Column-based condition overloads (use with TableDef columns)
+    // -------------------------------------------------------------------------
+
+    /** @see Conditions#eq(Column, String) */
+    public static Condition eq(Column column, String value)   { return Conditions.eq(column, value); }
+
+    /** @see Conditions#ne(Column, String) */
+    public static Condition ne(Column column, String value)   { return Conditions.ne(column, value); }
+
+    /** @see Conditions#gt(Column, String) */
+    public static Condition gt(Column column, String value)   { return Conditions.gt(column, value); }
+
+    /** @see Conditions#lt(Column, String) */
+    public static Condition lt(Column column, String value)   { return Conditions.lt(column, value); }
+
+    /** @see Conditions#ge(Column, String) */
+    public static Condition ge(Column column, String value)   { return Conditions.ge(column, value); }
+
+    /** @see Conditions#le(Column, String) */
+    public static Condition le(Column column, String value)   { return Conditions.le(column, value); }
+
+    /** @see Conditions#like(Column, String) */
+    public static Condition like(Column column, String value) { return Conditions.like(column, value); }
+
+    /** @see Conditions#ilike(Column, String) */
+    public static Condition ilike(Column column, String value){ return Conditions.ilike(column, value); }
+
+    /** @see Conditions#in(Column, String...) */
+    public static Condition in(Column column, String... values) { return Conditions.in(column, values); }
+
+    /** @see Conditions#between(Column, String, String) */
+    public static Condition between(Column column, String from, String to) { return Conditions.between(column, from, to); }
+
+    /** @see Conditions#isNull(Column) */
+    public static Condition isNull(Column column)    { return Conditions.isNull(column); }
+
+    /** @see Conditions#isNotNull(Column) */
+    public static Condition isNotNull(Column column) { return Conditions.isNotNull(column); }
 
     /** @see Conditions#and() */
     public static Condition and() { return Conditions.and(); }
