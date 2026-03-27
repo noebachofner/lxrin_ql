@@ -26,7 +26,7 @@ Then add the dependency to your Scout server module's `pom.xml`:
 
 ```xml
 <dependency>
-    <groupId>com.lxrin</groupId>
+    <groupId>ch.lxrin</groupId>
     <artifactId>lxrin-ql</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -42,8 +42,8 @@ Create one class per database table in a `tables` package. Each class extends `T
 
 ```java
 // src/main/java/com/example/tables/PersonTable.java
-import com.lxrin.ql.table.TableDef;
-import com.lxrin.ql.table.Column;
+import ch.lxrin.ql.table.TableDef;
+import ch.lxrin.ql.table.Column;
 
 public class PersonTable extends TableDef {
 
@@ -69,28 +69,16 @@ Use `column("COLUMN_NAME", "myAlias")` to override.
 In any Scout service class, add:
 
 ```java
-import static com.lxrin.ql.LxrinQL.*;
+import static ch.lxrin.ql.LxrinQL.*;
 ```
 
 This single import gives you access to all query-building methods, condition factories, and typed overloads.
 
 ---
 
-## Step 4: Build your binds
+## Step 4: Write your first query
 
-Use `Binds` for typed, named parameters:
-
-```java
-import com.lxrin.ql.bind.Binds;
-
-Binds b = new Binds()
-    .setString("status", "ACTIVE")
-    .setInt("minAge", 18);
-```
-
----
-
-## Step 5: Write your first query
+Bind parameters go **directly inside the query chain** — no intermediate variable needed:
 
 ### SELECT into a table page data
 
@@ -100,17 +88,14 @@ public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
     PersonTablePageData pageData = new PersonTablePageData();
     PersonTable t = new PersonTable();
 
-    Binds b = new Binds()
-        .setString("status",   "ACTIVE")
-        .setString("lastName", "%" + filter.getLastName().getValue() + "%");
-
     selectInto(pageData)
         .from(t)
         .select(t.personNr)
         .select(t.firstName)
         .select(t.lastName)
         .where(eq(t.status, ":status"), and(), ilike(t.lastName, ":lastName"))
-        .bind(b)
+        .bind("status",   "ACTIVE")
+        .bind("lastName", "%" + filter.getLastName().getValue() + "%")
         .execute();
 
     return pageData;
@@ -130,14 +115,12 @@ INTO :personNr, :firstName, :lastName
 ```java
 PersonTable t = new PersonTable();
 
-Binds b = new Binds().setString("status", "ACTIVE");
-
 List<PersonBean> people = createContribution(PersonBean.class)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
     .where(eq(t.status, ":status"))
-    .bind(b)
+    .bind("status", "ACTIVE")
     .mapWith(row -> {
         PersonBean bean = new PersonBean();
         bean.setPersonNr((Long)   row[0]);
@@ -147,31 +130,52 @@ List<PersonBean> people = createContribution(PersonBean.class)
     .multiple();
 ```
 
+When you need typed setters (e.g. `Long`, `LocalDate`), use `new Binds()` inline in the chain — still no separate variable:
+
+```java
+PersonTable t = new PersonTable();
+
+List<PersonBean> people = createContribution(PersonBean.class)
+    .from(t)
+    .select(t.personNr)
+    .where(eq(t.personNr, ":personNr"))
+    .bind(new Binds().setLong("personNr", getPersonNr()))
+    .mapWith(row -> new PersonBean((Long) row[0]))
+    .multiple();
+```
+
 ---
 
-## Step 6: Add conditions
+## Step 5: Add conditions
 
 Combine conditions with explicit `and()` / `or()` operators:
 
 ```java
 PersonTable t = new PersonTable();
 
-.where(
-    eq(t.status, ":status"),
-    and(),
-    ge(t.age, ":minAge"),
-    and(),
-    group(
-        isNull(t.deletedAt),
-        or(),
-        gt(t.deletedAt, ":cutoff")
+createContribution(PersonBean.class)
+    .from(t)
+    .select(t.personNr)
+    .where(
+        eq(t.status, ":status"),
+        and(),
+        ge(t.age, ":minAge"),
+        and(),
+        group(
+            isNull(t.deletedAt),
+            or(),
+            gt(t.deletedAt, ":cutoff")
+        )
     )
-)
+    .bind("status",  "ACTIVE")
+    .bind("minAge",  18)
+    .bind("cutoff",  "2024-01-01")
+    .multiple();
 ```
 
 ---
 
-## Step 7: Run the tests
+## Step 6: Run the tests
 
 ```bash
 mvn test

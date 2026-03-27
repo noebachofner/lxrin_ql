@@ -77,7 +77,7 @@ table package
 ### LxrinQL (entry point)
 
 ```java
-import static com.lxrin.ql.LxrinQL.*;
+import static ch.lxrin.ql.LxrinQL.*;
 ```
 
 | Method | Description |
@@ -122,15 +122,24 @@ Chain builder methods, then call a terminal operation.
 ```java
 PersonTable t = new PersonTable();
 
-Binds b = new Binds()
-    .setString("status", "ACTIVE")
-    .setInt("minAge", 18);
-
 List<String> names = createContribution(String.class)
     .from(t)
     .select(t.firstName)
     .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind(b)
+    .bind("status", "ACTIVE")
+    .bind("minAge", 18)
+    .mapWith(row -> (String) row[0])
+    .multiple();
+```
+
+For typed setters (`Long`, `LocalDate`, …), use `new Binds()` inline:
+
+```java
+List<String> names = createContribution(String.class)
+    .from(t)
+    .select(t.firstName)
+    .where(eq(t.personNr, ":personNr"))
+    .bind(new Binds().setLong("personNr", getPersonNr()))
     .mapWith(row -> (String) row[0])
     .multiple();
 ```
@@ -167,15 +176,13 @@ Builds `SELECT … INTO` statements for Eclipse Scout table page data.
 ```java
 PersonTable t = new PersonTable();
 
-Binds b = new Binds().setString("status", "ACTIVE");
-
 LxrinQL.selectInto(personTableData)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
     .select(t.lastName)
     .where(eq(t.status, ":status"))
-    .bind(b)
+    .bind("status", "ACTIVE")
     .execute();
 ```
 
@@ -191,7 +198,7 @@ INTO :personNr, :firstName, :lastName
 
 ### Conditions
 
-Import with `import static com.lxrin.ql.condition.Conditions.*;` or use `LxrinQL.*`.
+Import with `import static ch.lxrin.ql.condition.Conditions.*;` or use `LxrinQL.*`.
 
 All methods come in two overloads:
 - `eq(String column, String value)` — raw SQL string
@@ -244,25 +251,28 @@ builder.where(custom);
 
 ### Binds
 
-`com.lxrin.ql.bind.Binds`
+`ch.lxrin.ql.bind.Binds`
 
 Typed, mutable container for named SQL bind parameters. Supports method chaining.
 
+**Primary pattern — bind directly in the query chain:**
 ```java
-Binds b = new Binds()
-    .setLong("personNr",  getPersonNr())
-    .setString("status",  "ACTIVE")
-    .setInt("minAge",     18)
-    .setBoolean("active", true)
-    .setDate("since",     LocalDate.now())
-    .setDateTime("before", LocalDateTime.now())
-    .setBigDecimal("min", new BigDecimal("9.99"))
-    .setDouble("rate",    0.05);
-
-// Pass to a builder:
 createContribution(PersonBean.class)
-    .from("PERSON t")
-    .bind(b)
+    .from(t)
+    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
+    .bind("status", "ACTIVE")
+    .bind("minAge", 18)
+    .multiple();
+```
+
+**When you need typed setters (`Long`, `LocalDate`, …) — use `new Binds()` inline:**
+```java
+createContribution(PersonBean.class)
+    .from(t)
+    .where(eq(t.personNr, ":personNr"))
+    .bind(new Binds()
+        .setLong("personNr", getPersonNr())
+        .setDate("since",    LocalDate.now()))
     .multiple();
 ```
 
@@ -286,7 +296,7 @@ createContribution(PersonBean.class)
 
 ### BindMap
 
-`com.lxrin.ql.bind.BindMap`
+`ch.lxrin.ql.bind.BindMap`
 
 Copy-on-write (immutable) map of named SQL parameters. Used internally by the builders; also useful for functional / pre-built bind configurations.
 
@@ -300,13 +310,13 @@ binds.asMap();         // unmodifiable Map<String, Object>
 binds.isEmpty();       // false
 ```
 
-> **Tip:** Prefer `Binds` for everyday use. Use `BindMap` only when you need immutable/functional semantics.
+> **Tip:** For everyday queries use `.bind("name", value)` directly in the chain. Use `BindMap` only when you need immutable/functional semantics.
 
 ---
 
 ### TableDef
 
-`com.lxrin.ql.table.TableDef`
+`ch.lxrin.ql.table.TableDef`
 
 Abstract base class for typed table definitions. Subclass once per database table.
 
@@ -338,7 +348,7 @@ public class ProductTable extends TableDef {
 
 ### Column
 
-`com.lxrin.ql.table.Column`
+`ch.lxrin.ql.table.Column`
 
 Strongly-typed column reference created by `TableDef.column(…)`.
 
@@ -354,7 +364,7 @@ Pass a `Column` anywhere a `String` column name is expected in the builder or co
 
 ### ISqlExecutor
 
-`com.lxrin.ql.sql.ISqlExecutor`
+`ch.lxrin.ql.sql.ISqlExecutor`
 
 ```java
 public interface ISqlExecutor {
@@ -384,15 +394,13 @@ src/main/java/com/example/
 
 ### Service method example
 
+Bind parameters inline in the query chain — no separate variable needed:
+
 ```java
 @Override
 public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
     PersonTablePageData pageData = new PersonTablePageData();
     PersonTable t = new PersonTable();
-
-    Binds b = new Binds()
-        .setString("status",   "ACTIVE")
-        .setString("lastName", "%" + filter.getLastName().getValue() + "%");
 
     LxrinQL.selectInto(pageData)
         .from(t)
@@ -404,7 +412,8 @@ public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
             and(),
             ilike(t.lastName, ":lastName")
         )
-        .bind(b)
+        .bind("status",   "ACTIVE")
+        .bind("lastName", "%" + filter.getLastName().getValue() + "%")
         .execute();
 
     return pageData;
@@ -418,16 +427,13 @@ public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
 protected void execLoadData(ILookupCall<Long> call) {
     CategoryTable c = new CategoryTable();
 
-    Binds b = new Binds()
-        .setBoolean("active", true)
-        .setString("text", "%" + call.getText() + "%");
-
     List<ILookupRow<Long>> rows = LxrinQL.createContribution(ILookupRow.class)
         .from(c)
         .select(c.categoryId)
         .select(c.name)
         .where(eq(c.active, ":active"), and(), ilike(c.name, ":text"))
-        .bind(b)
+        .bind("active", true)
+        .bind("text",   "%" + call.getText() + "%")
         .mapWith(row -> new LookupRow<>((Long) row[0], (String) row[1]))
         .multiple();
 
@@ -449,7 +455,7 @@ protected void execLoadData(ILookupCall<Long> call) {
 - Use `between` for date ranges: `between(t.createdAt, ":from", ":to")`
 - For array contains, write a custom condition: `() -> "t.TAGS @> ARRAY[:tag]::text[]"`
 - Bind `null` to skip optional filters on the database side (use Scout's `{? … }` syntax in combination)
-- Use `setDate` / `setDateTime` in `Binds` to pass proper `LocalDate` / `LocalDateTime` values — Scout's JDBC layer converts them correctly for PostgreSQL
+- Use `new Binds().setDate(…)` / `.setDateTime(…)` inline for proper `LocalDate` / `LocalDateTime` values — Scout's JDBC layer converts them correctly for PostgreSQL
 
 ---
 
@@ -465,13 +471,12 @@ void testPersonQuery() {
         .thenReturn(new Object[][]{{1L, "Alice"}, {2L, "Bob"}});
 
     PersonTable t = new PersonTable();
-    Binds b = new Binds().setString("status", "ACTIVE");
 
     List<String> names = LxrinQL.createContribution(String.class)
         .from(t)
         .select(t.firstName)
         .where(eq(t.status, ":status"))
-        .bind(b)
+        .bind("status", "ACTIVE")
         .executor(executor)
         .mapWith(row -> (String) row[0])
         .multiple();
@@ -517,34 +522,47 @@ A: Yes — implement `ISqlExecutor` yourself to delegate to plain JDBC or any ot
 **Q: Does LxrinQL prevent SQL injection?**  
 A: LxrinQL uses Scout's named bind parameters (`:name`), which are parameterized. Column names and table names in `TableDef`, `.from()`, `.join()` are not escaped — never pass user input there.
 
+**Q: How do I bind parameters?**  
+A: Use `.bind("name", value)` directly in the query chain — this is the primary pattern:
+```java
+createContribution(PersonBean.class)
+    .from(t)
+    .where(eq(t.status, ":status"))
+    .bind("status", "ACTIVE")
+    .multiple();
+```
+For typed values (`Long`, `LocalDate`, …), use `new Binds()` inline:
+```java
+    .bind(new Binds().setLong("personNr", getPersonNr()))
+```
+
 **Q: Should I use `Binds` or `BindMap`?**  
-A: Use `Binds` in all normal cases. It is mutable and has type-specific setters. Use `BindMap` only if you need immutable/copy-on-write semantics (e.g. building shared base queries).
+A: For everyday queries use `.bind("name", value)` directly in the chain, or `new Binds()` inline when you need typed setters. Use `BindMap` only if you need immutable/copy-on-write semantics (e.g. building shared base queries in a static field).
 
 **Q: How does the auto-alias work in `TableDef`?**  
 A: `column("PRODUCT_NR")` splits on `_`, lowercases everything, and capitalises each subsequent word: `product` + `Nr` → `productNr`. Use `column("COLUMN", "myAlias")` to override.
 
 **Q: Can I reuse a partially built query?**  
-A: Yes. `BindMap` is copy-on-write, so storing a `QueryBuilder` reference and calling `.bind()` multiple times is safe. With `Binds`, create a new instance per request.
+A: Yes. `BindMap` is copy-on-write, so storing a `QueryBuilder` reference and calling `.bind()` multiple times is safe.
 
 **Q: How do I handle optional filters?**  
-A: Build conditions conditionally before calling `.where()`:
+A: Build conditions and call `.bind()` conditionally before the terminal method:
 
 ```java
 PersonTable t = new PersonTable();
 var qb = createContribution(PersonBean.class).from(t).select(t.personNr);
-Binds b = new Binds();
 List<Condition> conds = new ArrayList<>();
 
 if (status != null) {
     conds.add(eq(t.status, ":status"));
-    b.setString("status", status);
+    qb.bind("status", status);
 }
 if (lastName != null && !lastName.isBlank()) {
     if (!conds.isEmpty()) conds.add(and());
     conds.add(ilike(t.lastName, ":lastName"));
-    b.setString("lastName", "%" + lastName + "%");
+    qb.bind("lastName", "%" + lastName + "%");
 }
 
 if (!conds.isEmpty()) qb.where(conds.toArray(new Condition[0]));
-List<PersonBean> result = qb.bind(b).multiple();
+List<PersonBean> result = qb.multiple();
 ```

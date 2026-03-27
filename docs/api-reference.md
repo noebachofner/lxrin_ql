@@ -6,7 +6,7 @@ Complete reference for all public types and methods.
 
 ## `LxrinQL`
 
-`com.lxrin.ql.LxrinQL`
+`ch.lxrin.ql.LxrinQL`
 
 Static entry point. All methods are `public static`.
 
@@ -23,7 +23,7 @@ Static entry point. All methods are `public static`.
 All `Conditions.*` methods (both `String` and `Column` overloads) are available directly on `LxrinQL`:
 
 ```java
-import static com.lxrin.ql.LxrinQL.*;
+import static ch.lxrin.ql.LxrinQL.*;
 // then use: eq(...), and(), group(...), etc.
 // works with both String column names and Column objects from TableDef
 ```
@@ -32,7 +32,7 @@ import static com.lxrin.ql.LxrinQL.*;
 
 ## `QueryBuilder<T>`
 
-`com.lxrin.ql.QueryBuilder`
+`ch.lxrin.ql.QueryBuilder`
 
 ### Builder methods
 
@@ -63,7 +63,7 @@ import static com.lxrin.ql.LxrinQL.*;
 
 ## `SelectIntoBuilder`
 
-`com.lxrin.ql.SelectIntoBuilder`
+`ch.lxrin.ql.SelectIntoBuilder`
 
 ### Builder methods
 
@@ -93,9 +93,24 @@ import static com.lxrin.ql.LxrinQL.*;
 
 ## `Binds`
 
-`com.lxrin.ql.bind.Binds`
+`ch.lxrin.ql.bind.Binds`
 
-Typed, mutable, chainable bind parameter container.
+Typed, mutable, chainable bind parameter container. Use `new Binds()` inline in the query chain when you need typed setters:
+
+```java
+createContribution(PersonBean.class)
+    .from(t)
+    .where(eq(t.personNr, ":personNr"))
+    .bind(new Binds().setLong("personNr", getPersonNr()))
+    .multiple();
+```
+
+For simple `String` / `int` values, chain `.bind("name", value)` directly — no `Binds` object needed:
+
+```java
+    .bind("status", "ACTIVE")
+    .bind("minAge", 18)
+```
 
 | Method | Stored type | Description |
 |--------|------------|-------------|
@@ -119,7 +134,7 @@ All setters return `this` for chaining. All setters throw `IllegalArgumentExcept
 
 ## `BindMap`
 
-`com.lxrin.ql.bind.BindMap`
+`ch.lxrin.ql.bind.BindMap`
 
 Immutable (copy-on-write) map of named SQL parameters.
 
@@ -134,7 +149,7 @@ Immutable (copy-on-write) map of named SQL parameters.
 
 ## `TableDef`
 
-`com.lxrin.ql.table.TableDef`
+`ch.lxrin.ql.table.TableDef`
 
 Abstract base class for typed table definitions.
 
@@ -167,7 +182,7 @@ Examples: `PERSON_NR` → `personNr`, `FIRST_NAME` → `firstName`, `ID` → `id
 
 ## `Column`
 
-`com.lxrin.ql.table.Column`
+`ch.lxrin.ql.table.Column`
 
 Typed column reference. Created exclusively via `TableDef.column(…)`.
 
@@ -183,7 +198,7 @@ Typed column reference. Created exclusively via `TableDef.column(…)`.
 
 ## `Conditions`
 
-`com.lxrin.ql.condition.Conditions`
+`ch.lxrin.ql.condition.Conditions`
 
 Static factory methods for SQL WHERE fragments. Every method has a `String` overload and a `Column` overload.
 
@@ -227,7 +242,7 @@ Static factory methods for SQL WHERE fragments. Every method has a `String` over
 
 ## `Condition`
 
-`com.lxrin.ql.condition.Condition`
+`ch.lxrin.ql.condition.Condition`
 
 Functional interface. `String toSql()` returns the SQL fragment.
 
@@ -240,7 +255,7 @@ Condition custom = () -> "EXTRACT(YEAR FROM t.BIRTH_DATE) = :year";
 
 ## `ISqlExecutor`
 
-`com.lxrin.ql.sql.ISqlExecutor`
+`ch.lxrin.ql.sql.ISqlExecutor`
 
 | Method | Description |
 |--------|-------------|
@@ -254,7 +269,7 @@ Default implementation: `ScoutSqlExecutor` (delegates to `org.eclipse.scout.rt.s
 
 ## `RowMapper<T>`
 
-`com.lxrin.ql.RowMapper`
+`ch.lxrin.ql.RowMapper`
 
 Functional interface: `T map(Object[] row)`.
 

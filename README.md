@@ -53,7 +53,7 @@ mvn install -DskipTests
 
 ```xml
 <dependency>
-    <groupId>com.lxrin</groupId>
+    <groupId>ch.lxrin</groupId>
     <artifactId>lxrin-ql</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -69,8 +69,8 @@ Eclipse Scout RT is already provided by your Scout project — no extra dependen
 
 ```java
 // src/main/java/com/example/tables/PersonTable.java
-import com.lxrin.ql.table.TableDef;
-import com.lxrin.ql.table.Column;
+import ch.lxrin.ql.table.TableDef;
+import ch.lxrin.ql.table.Column;
 
 public class PersonTable extends TableDef {
     public final Column personNr   = column("PERSON_NR");
@@ -87,16 +87,14 @@ public class PersonTable extends TableDef {
 
 Column aliases are auto-derived: `FIRST_NAME` → `firstName`, `PERSON_NR` → `personNr`.
 
-### Step 2 — Query with typed columns and typed binds
+### Step 2 — Query with typed columns and inline binds
+
+Bind parameters are set **directly inside the query chain** using `.bind("name", value)`:
 
 ```java
-import static com.lxrin.ql.LxrinQL.*;
+import static ch.lxrin.ql.LxrinQL.*;
 
 PersonTable t = new PersonTable();
-
-Binds b = new Binds()
-    .setString("status", "ACTIVE")
-    .setInt("minAge", 18);
 
 List<PersonBean> people = createContribution(PersonBean.class)
     .from(t)
@@ -105,7 +103,8 @@ List<PersonBean> people = createContribution(PersonBean.class)
     .select(t.lastName)
     .join("LEFT JOIN ADDRESS a ON a.PERSON_NR = t.PERSON_NR")
     .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind(b)
+    .bind("status", "ACTIVE")
+    .bind("minAge", 18)
     .mapWith(row -> {
         PersonBean p = new PersonBean();
         p.setPersonNr((Long)   row[0]);
@@ -121,15 +120,13 @@ List<PersonBean> people = createContribution(PersonBean.class)
 ```java
 PersonTable t = new PersonTable();
 
-Binds b = new Binds().setString("status", "ACTIVE");
-
 selectInto(personTablePageData)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
     .select(t.lastName)
     .where(eq(t.status, ":status"))
-    .bind(b)
+    .bind("status", "ACTIVE")
     .execute();
 // Generated: SELECT t.PERSON_NR, t.FIRST_NAME, t.LAST_NAME
 //            FROM PERSON t
@@ -150,28 +147,35 @@ Long count = createContribution(Long.class)
 
 ---
 
-## `Binds` — Typed Bind Parameters
+## Bind Parameters
 
-`Binds` is a mutable, chainable container for named SQL parameters. Use it instead of multiple `.bind(name, value)` calls.
+Add named bind parameters directly in the query chain with `.bind("name", value)`:
 
 ```java
-Binds b = new Binds()
-    .setLong("personNr",  getPersonNr())   // Long
-    .setString("status",  "ACTIVE")        // String
-    .setInt("minAge",     18)              // Integer
-    .setBoolean("active", true)            // Boolean
-    .setDate("since",     LocalDate.now()) // LocalDate
-    .setBigDecimal("min", new BigDecimal("9.99")); // BigDecimal
-
-// Pass to any builder:
 createContribution(PersonBean.class)
-    .from("PERSON t")
-    .bind(b)
+    .from(t)
+    .select(t.personNr)
+    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
+    .bind("status", "ACTIVE")     // String
+    .bind("minAge", 18)           // Integer
     .multiple();
 ```
 
-| Method | Type |
-|--------|------|
+When you need typed setters (e.g. for `Long`, `LocalDate`), use `new Binds()` inline in the chain — no intermediate variable needed:
+
+```java
+createContribution(PersonBean.class)
+    .from(t)
+    .select(t.personNr)
+    .where(eq(t.personNr, ":personNr"), and(), eq(t.status, ":status"))
+    .bind(new Binds()
+        .setLong("personNr", getPersonNr())
+        .setString("status", "ACTIVE"))
+    .multiple();
+```
+
+| `Binds` method | Type |
+|----------------|------|
 | `setLong(name, Long)` | `Long` |
 | `setInt(name, Integer)` | `Integer` |
 | `setDouble(name, Double)` | `Double` |
@@ -206,14 +210,13 @@ Use it in a query:
 
 ```java
 OrderTable o = new OrderTable();
-Binds b = new Binds().setString("status", "ACTIVE");
 
 List<OrderBean> orders = createContribution(OrderBean.class)
     .from(o)
     .select(o.orderId)
     .select(o.total)
     .where(eq(o.status, ":status"))
-    .bind(b)
+    .bind("status", "ACTIVE")
     .mapWith(row -> new OrderBean((Long) row[0], (Double) row[1]))
     .multiple();
 ```
