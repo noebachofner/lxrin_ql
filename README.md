@@ -19,10 +19,12 @@
 ## Features
 
 - ✅ **Typed table definitions** — define tables and columns as Java classes; use `products.productNr` instead of `"p.PRODUCT_NR"`
+- ✅ **Inline bind parameters** — `b.setLong(value)` auto-names the parameter and returns `:placeholder` for use inside conditions — no separate bind step
 - ✅ **Typed `Binds` class** — `setLong`, `setString`, `setInt`, `setBoolean`, `setDate`, … no more raw `Object` casts
 - ✅ Fluent `SELECT` builder (`QueryBuilder`) with `.single()` / `.multiple()`
 - ✅ Fluent `SELECT … INTO` builder (`SelectIntoBuilder`) for Scout table page data
 - ✅ Full condition API: `eq`, `ne`, `gt`, `lt`, `ge`, `le`, `like`, `ilike`, `in`, `between`, `isNull`, `isNotNull`, `not`, `group` — all accept both `String` and `Column`
+- ✅ **`qlid` IntelliJ live template** — type `qlid` + Ctrl+Space to insert a persisted auto-incrementing `long` ID (starts at 1000, survives IDE restarts)
 - ✅ Low-level `BindMap` for functional / copy-on-write scenarios
 - ✅ Pluggable `ISqlExecutor` for easy unit testing with mocks
 - ✅ Zero runtime dependencies beyond Eclipse Scout RT
@@ -89,12 +91,14 @@ Column aliases are auto-derived: `FIRST_NAME` → `firstName`, `PERSON_NR` → `
 
 ### Step 2 — Query with typed columns and inline binds
 
-Bind parameters are set **directly inside the query chain** using `.bind("name", value)`:
+The **recommended pattern** is to call `b.setLong(value)` / `b.setString(value)` etc. **directly inside the condition**.  
+Each call auto-generates a bind name and returns the `:placeholder` string:
 
 ```java
 import static ch.lxrin.ql.LxrinQL.*;
 
 PersonTable t = new PersonTable();
+Binds b = new Binds();   // one instance per query
 
 List<PersonBean> people = createContribution(PersonBean.class)
     .from(t)
@@ -102,9 +106,8 @@ List<PersonBean> people = createContribution(PersonBean.class)
     .select(t.firstName)
     .select(t.lastName)
     .join("LEFT JOIN ADDRESS a ON a.PERSON_NR = t.PERSON_NR")
-    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind("status", "ACTIVE")
-    .bind("minAge", 18)
+    .where(eq(t.status, b.setString("ACTIVE")), and(), ge(t.age, b.setInt(18)))
+    .bind(b)
     .mapWith(row -> {
         PersonBean p = new PersonBean();
         p.setPersonNr((Long)   row[0]);
@@ -119,29 +122,31 @@ List<PersonBean> people = createContribution(PersonBean.class)
 
 ```java
 PersonTable t = new PersonTable();
+Binds b = new Binds();
 
 selectInto(personTablePageData)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
     .select(t.lastName)
-    .where(eq(t.status, ":status"))
-    .bind("status", "ACTIVE")
+    .where(eq(t.status, b.setString("ACTIVE")))
+    .bind(b)
     .execute();
 // Generated: SELECT t.PERSON_NR, t.FIRST_NAME, t.LAST_NAME
 //            FROM PERSON t
-//            WHERE t.STATUS = :status
+//            WHERE t.STATUS = :p0
 //            INTO :personNr, :firstName, :lastName
 ```
 
 ### Fetching a single scalar value
 
 ```java
+Binds b = new Binds();
 Long count = createContribution(Long.class)
     .from("PERSON t")
     .select("COUNT(*)", "cnt")
-    .where(eq("t.STATUS", ":status"))
-    .bind("status", "ACTIVE")
+    .where(eq("t.STATUS", b.setString("ACTIVE")))
+    .bind(b)
     .single();
 ```
 
@@ -149,42 +154,88 @@ Long count = createContribution(Long.class)
 
 ## Bind Parameters
 
-Add named bind parameters directly in the query chain with `.bind("name", value)`:
+### Inline (recommended) — `Binds` with value-only setters
+
+Create one `Binds b = new Binds()` and call the single-argument typed setters
+**directly inside your condition expressions**:
+
+```java
+Binds b = new Binds();
+
+createContribution(PersonBean.class)
+    .from(t)
+    .select(t.personNr)
+    .where(eq(t.status,  b.setString("ACTIVE")),
+           and(),
+           ge(t.age,     b.setInt(18)),
+           and(),
+           eq(t.personNr, b.setLong(getPersonNr())))
+    .bind(b)
+    .multiple();
+```
+
+Each `b.setX(value)` call:
+1. Auto-generates a sequential name (`p0`, `p1`, `p2`, …)
+2. Registers the value internally
+3. Returns the `:pN` placeholder string consumed by the condition
+
+### Named binding (alternative)
+
+If you prefer to name your parameters explicitly:
 
 ```java
 createContribution(PersonBean.class)
     .from(t)
-    .select(t.personNr)
     .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind("status", "ACTIVE")     // String
-    .bind("minAge", 18)           // Integer
+    .bind("status", "ACTIVE")
+    .bind("minAge", 18)
     .multiple();
 ```
 
-When you need typed setters (e.g. for `Long`, `LocalDate`), use `new Binds()` inline in the chain — no intermediate variable needed:
+| Single-arg (inline) | Two-arg (named) | Type |
+|---------------------|----------------|------|
+| `b.setLong(Long)` | `b.setLong(name, Long)` | `Long` |
+| `b.setInt(Integer)` | `b.setInt(name, Integer)` | `Integer` |
+| `b.setDouble(Double)` | `b.setDouble(name, Double)` | `Double` |
+| `b.setBigDecimal(BigDecimal)` | `b.setBigDecimal(name, BigDecimal)` | `BigDecimal` |
+| `b.setString(String)` | `b.setString(name, String)` | `String` |
+| `b.setBoolean(Boolean)` | `b.setBoolean(name, Boolean)` | `Boolean` |
+| `b.setDate(LocalDate)` | `b.setDate(name, LocalDate)` | `LocalDate` |
+| `b.setDateTime(LocalDateTime)` | `b.setDateTime(name, LocalDateTime)` | `LocalDateTime` |
+
+---
+
+## `qlid` — Auto-Incrementing IDs (IntelliJ live template)
+
+LxrinQL ships an IntelliJ live template that inserts a **persisted auto-incrementing `long`** — perfect for Eclipse Scout `CodeType` IDs.
+
+### Setup
+
+1. Open **File → Manage IDE Settings → Import Settings**
+2. Select `live-templates/LxrinQL.xml` from this repository
+3. Make sure *Live templates* is checked, click **OK**
+
+### Usage
+
+In any Java file, type `qlid` and press **Ctrl+Space** (or **Tab**).  
+The template expands to the next available ID literal, e.g. `1000L`, `1001L`, `1002L`, …
+
+The counter is stored in `~/.lxrin_ql_id_seq` and **survives IDE restarts**.
 
 ```java
-createContribution(PersonBean.class)
-    .from(t)
-    .select(t.personNr)
-    .where(eq(t.personNr, ":personNr"), and(), eq(t.status, ":status"))
-    .bind(new Binds()
-        .setLong("personNr", getPersonNr())
-        .setString("status", "ACTIVE"))
-    .multiple();
-```
+public class MyCodeType extends AbstractCodeType<Long, String> {
 
-| `Binds` method | Type |
-|----------------|------|
-| `setLong(name, Long)` | `Long` |
-| `setInt(name, Integer)` | `Integer` |
-| `setDouble(name, Double)` | `Double` |
-| `setBigDecimal(name, BigDecimal)` | `BigDecimal` |
-| `setString(name, String)` | `String` |
-| `setBoolean(name, Boolean)` | `Boolean` |
-| `setDate(name, LocalDate)` | `LocalDate` |
-| `setDateTime(name, LocalDateTime)` | `LocalDateTime` |
-| `set(name, Object)` | generic fallback |
+    public static final long ID = 1000L;   // ← expanded from "qlid"
+
+    public static class ActiveCode extends AbstractCode<String> {
+        public static final long ID = 1001L;   // ← next "qlid"
+    }
+
+    public static class InactiveCode extends AbstractCode<String> {
+        public static final long ID = 1002L;   // ← next "qlid"
+    }
+}
+```
 
 ---
 
@@ -210,21 +261,22 @@ Use it in a query:
 
 ```java
 OrderTable o = new OrderTable();
+Binds b = new Binds();
 
 List<OrderBean> orders = createContribution(OrderBean.class)
     .from(o)
     .select(o.orderId)
     .select(o.total)
-    .where(eq(o.status, ":status"))
-    .bind("status", "ACTIVE")
+    .where(eq(o.status, b.setString("ACTIVE")))
+    .bind(b)
     .mapWith(row -> new OrderBean((Long) row[0], (Double) row[1]))
     .multiple();
 ```
 
 Conditions accept both `Column` and `String`:
 ```java
-.where(eq(o.status, ":status"))       // Column overload
-.where(eq("o.STATUS", ":status"))     // String overload (still works)
+.where(eq(o.status, b.setString("ACTIVE")))  // Column overload (recommended)
+.where(eq("o.STATUS", b.setString("ACTIVE"))) // String overload (still works)
 ```
 
 ---

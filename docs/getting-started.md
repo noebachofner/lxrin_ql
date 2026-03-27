@@ -9,6 +9,7 @@ This guide walks you through setting up LxrinQL in an Eclipse Scout Maven projec
 - Java 17 or higher
 - Maven 3.8+
 - An Eclipse Scout project (version 23.2.0+)
+- IntelliJ IDEA (for the optional `qlid` live template)
 
 ---
 
@@ -36,7 +37,34 @@ Eclipse Scout RT is already present in your Scout project — the `provided` dep
 
 ---
 
-## Step 2: Define your tables
+## Step 2: (Optional) Install the `qlid` IntelliJ live template
+
+LxrinQL ships a live template that inserts a persisted auto-incrementing `long`
+ID every time you type `qlid` + **Ctrl+Space**.  The counter starts at **1000**
+and survives IDE restarts.  Perfect for Eclipse Scout `CodeType` IDs.
+
+1. In IntelliJ: **File → Manage IDE Settings → Import Settings**
+2. Select **`live-templates/LxrinQL.xml`** from this repository
+3. Make sure *Live templates* is checked → click **OK**
+
+```java
+public class PersonStatusCodeType extends AbstractCodeType<Long, String> {
+
+    public static final long ID = 1000L;   // ← typed "qlid" Ctrl+Space
+
+    public static class ActiveCode extends AbstractCode<String> {
+        public static final long ID = 1001L;   // ← next "qlid"
+    }
+
+    public static class InactiveCode extends AbstractCode<String> {
+        public static final long ID = 1002L;   // ← next "qlid"
+    }
+}
+```
+
+---
+
+## Step 3: Define your tables
 
 Create one class per database table in a `tables` package. Each class extends `TableDef` and declares its columns as `public final Column` fields.
 
@@ -64,7 +92,7 @@ Use `column("COLUMN_NAME", "myAlias")` to override.
 
 ---
 
-## Step 3: Static import
+## Step 4: Static import
 
 In any Scout service class, add:
 
@@ -76,9 +104,9 @@ This single import gives you access to all query-building methods, condition fac
 
 ---
 
-## Step 4: Write your first query
+## Step 5: Write your first query
 
-Bind parameters go **directly inside the query chain** — no intermediate variable needed:
+Create a `Binds b = new Binds()` and call the **single-argument typed setters directly inside the condition** — the name is auto-generated and the `:placeholder` is returned inline:
 
 ### SELECT into a table page data
 
@@ -87,15 +115,17 @@ Bind parameters go **directly inside the query chain** — no intermediate varia
 public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
     PersonTablePageData pageData = new PersonTablePageData();
     PersonTable t = new PersonTable();
+    Binds b = new Binds();
 
     selectInto(pageData)
         .from(t)
         .select(t.personNr)
         .select(t.firstName)
         .select(t.lastName)
-        .where(eq(t.status, ":status"), and(), ilike(t.lastName, ":lastName"))
-        .bind("status",   "ACTIVE")
-        .bind("lastName", "%" + filter.getLastName().getValue() + "%")
+        .where(eq(t.status, b.setString("ACTIVE")),
+               and(),
+               ilike(t.lastName, b.setString("%" + filter.getLastName().getValue() + "%")))
+        .bind(b)
         .execute();
 
     return pageData;
@@ -106,7 +136,7 @@ Generated SQL:
 ```sql
 SELECT t.PERSON_NR, t.FIRST_NAME, t.LAST_NAME
 FROM PERSON t
-WHERE t.STATUS = :status AND t.LAST_NAME ILIKE :lastName
+WHERE t.STATUS = :p0 AND t.LAST_NAME ILIKE :p1
 INTO :personNr, :firstName, :lastName
 ```
 
@@ -114,13 +144,16 @@ INTO :personNr, :firstName, :lastName
 
 ```java
 PersonTable t = new PersonTable();
+Binds b = new Binds();
 
 List<PersonBean> people = createContribution(PersonBean.class)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
-    .where(eq(t.status, ":status"))
-    .bind("status", "ACTIVE")
+    .where(eq(t.personNr, b.setLong(getPersonNr())),
+           and(),
+           eq(t.status,   b.setString("ACTIVE")))
+    .bind(b)
     .mapWith(row -> {
         PersonBean bean = new PersonBean();
         bean.setPersonNr((Long)   row[0]);
@@ -130,58 +163,43 @@ List<PersonBean> people = createContribution(PersonBean.class)
     .multiple();
 ```
 
-When you need typed setters (e.g. `Long`, `LocalDate`), use `new Binds()` inline in the chain — still no separate variable:
-
-```java
-PersonTable t = new PersonTable();
-
-List<PersonBean> people = createContribution(PersonBean.class)
-    .from(t)
-    .select(t.personNr)
-    .where(eq(t.personNr, ":personNr"))
-    .bind(new Binds().setLong("personNr", getPersonNr()))
-    .mapWith(row -> new PersonBean((Long) row[0]))
-    .multiple();
-```
-
 ---
 
-## Step 5: Add conditions
+## Step 6: Add conditions
 
 Combine conditions with explicit `and()` / `or()` operators:
 
 ```java
 PersonTable t = new PersonTable();
+Binds b = new Binds();
 
 createContribution(PersonBean.class)
     .from(t)
     .select(t.personNr)
     .where(
-        eq(t.status, ":status"),
+        eq(t.status,  b.setString("ACTIVE")),
         and(),
-        ge(t.age, ":minAge"),
+        ge(t.age,     b.setInt(18)),
         and(),
         group(
             isNull(t.deletedAt),
             or(),
-            gt(t.deletedAt, ":cutoff")
+            gt(t.deletedAt, b.setString("2024-01-01"))
         )
     )
-    .bind("status",  "ACTIVE")
-    .bind("minAge",  18)
-    .bind("cutoff",  "2024-01-01")
+    .bind(b)
     .multiple();
 ```
 
 ---
 
-## Step 6: Run the tests
+## Step 7: Run the tests
 
 ```bash
 mvn test
 ```
 
-All 66 tests use Mockito to mock the SQL executor — no database connection is required.
+All 77 tests use Mockito to mock the SQL executor — no database connection is required.
 
 ---
 

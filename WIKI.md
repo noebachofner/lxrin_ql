@@ -121,25 +121,13 @@ Chain builder methods, then call a terminal operation.
 
 ```java
 PersonTable t = new PersonTable();
+Binds b = new Binds();
 
 List<String> names = createContribution(String.class)
     .from(t)
     .select(t.firstName)
-    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind("status", "ACTIVE")
-    .bind("minAge", 18)
-    .mapWith(row -> (String) row[0])
-    .multiple();
-```
-
-For typed setters (`Long`, `LocalDate`, …), use `new Binds()` inline:
-
-```java
-List<String> names = createContribution(String.class)
-    .from(t)
-    .select(t.firstName)
-    .where(eq(t.personNr, ":personNr"))
-    .bind(new Binds().setLong("personNr", getPersonNr()))
+    .where(eq(t.status, b.setString("ACTIVE")), and(), ge(t.age, b.setInt(18)))
+    .bind(b)
     .mapWith(row -> (String) row[0])
     .multiple();
 ```
@@ -175,14 +163,15 @@ Builds `SELECT … INTO` statements for Eclipse Scout table page data.
 
 ```java
 PersonTable t = new PersonTable();
+Binds b = new Binds();
 
 LxrinQL.selectInto(personTableData)
     .from(t)
     .select(t.personNr)
     .select(t.firstName)
     .select(t.lastName)
-    .where(eq(t.status, ":status"))
-    .bind("status", "ACTIVE")
+    .where(eq(t.status, b.setString("ACTIVE")))
+    .bind(b)
     .execute();
 ```
 
@@ -255,17 +244,27 @@ builder.where(custom);
 
 Typed, mutable container for named SQL bind parameters. Supports method chaining.
 
-**Primary pattern — bind directly in the query chain:**
+**Primary pattern — single-argument setters inline inside conditions:**
+
+Create one `Binds b = new Binds()` and call the typed setters directly where
+the placeholder is needed.  Each call auto-names the parameter (`p0`, `p1`, …)
+and returns the `:placeholder` string:
+
 ```java
+Binds b = new Binds();
+
 createContribution(PersonBean.class)
     .from(t)
-    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
-    .bind("status", "ACTIVE")
-    .bind("minAge", 18)
+    .where(eq(t.status, b.setString("ACTIVE")),
+           and(),
+           ge(t.age,    b.setInt(18)),
+           and(),
+           eq(t.personNr, b.setLong(getPersonNr())))
+    .bind(b)
     .multiple();
 ```
 
-**When you need typed setters (`Long`, `LocalDate`, …) — use `new Binds()` inline:**
+**Alternative — named parameters (useful when sharing a placeholder):**
 ```java
 createContribution(PersonBean.class)
     .from(t)
