@@ -10,7 +10,7 @@
 
 ## Overview
 
-**LxrinQL** is a lightweight, fluent Java library that wraps Eclipse Scout's `SQL` service with a readable, type-safe query-builder API. Instead of concatenating SQL strings manually, you express queries as method chains and let LxrinQL generate the SQL for you.
+**LxrinQL** is a lightweight, fluent Java library that wraps Eclipse Scout's `SQL` service with a readable, type-safe query-builder API. Instead of concatenating SQL strings manually, you express queries as method chains — with strongly-typed table and column definitions — and let LxrinQL generate the SQL for you.
 
 > ⚠️ This project is AI-generated and intended as a learning/prototype tool.
 
@@ -18,10 +18,12 @@
 
 ## Features
 
-- ✅ Fluent `SELECT` builder (`QueryBuilder`)
+- ✅ **Typed table definitions** — define tables and columns as Java classes; use `products.productNr` instead of `"p.PRODUCT_NR"`
+- ✅ **Typed `Binds` class** — `setLong`, `setString`, `setInt`, `setBoolean`, `setDate`, … no more raw `Object` casts
+- ✅ Fluent `SELECT` builder (`QueryBuilder`) with `.single()` / `.multiple()`
 - ✅ Fluent `SELECT … INTO` builder (`SelectIntoBuilder`) for Scout table page data
-- ✅ Full condition API: `eq`, `ne`, `gt`, `lt`, `ge`, `le`, `like`, `ilike`, `in`, `between`, `isNull`, `isNotNull`, `not`, `group`
-- ✅ Named bind parameters via `BindMap`
+- ✅ Full condition API: `eq`, `ne`, `gt`, `lt`, `ge`, `le`, `like`, `ilike`, `in`, `between`, `isNull`, `isNotNull`, `not`, `group` — all accept both `String` and `Column`
+- ✅ Low-level `BindMap` for functional / copy-on-write scenarios
 - ✅ Pluggable `ISqlExecutor` for easy unit testing with mocks
 - ✅ Zero runtime dependencies beyond Eclipse Scout RT
 
@@ -29,17 +31,25 @@
 
 ## Requirements
 
-| Dependency           | Version    |
-|----------------------|-----------|
-| Java                 | 17+       |
-| Eclipse Scout RT     | 23.2.0+   |
-| Maven                | 3.8+      |
+| Dependency       | Version  |
+|-----------------|---------|
+| Java             | 17+     |
+| Eclipse Scout RT | 23.2.0+ |
+| Maven            | 3.8+    |
 
 ---
 
 ## Installation
 
-Add to your `pom.xml`:
+### 1. Build the JAR locally
+
+```bash
+git clone https://github.com/noebachofner/lxrin_ql.git
+cd lxrin_ql
+mvn install -DskipTests
+```
+
+### 2. Add to your Scout server module
 
 ```xml
 <dependency>
@@ -49,38 +59,56 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
-Eclipse Scout RT must be on the classpath (provided by your host application):
-
-```xml
-<dependency>
-    <groupId>org.eclipse.scout.rt</groupId>
-    <artifactId>org.eclipse.scout.rt.server.jdbc</artifactId>
-    <version>23.2.0</version>
-    <scope>provided</scope>
-</dependency>
-```
+Eclipse Scout RT is already provided by your Scout project — no extra dependency needed.
 
 ---
 
 ## Quick Start
 
-### Fetching a list of beans
+### Step 1 — Define your table once
+
+```java
+// src/main/java/com/example/tables/PersonTable.java
+import com.lxrin.ql.table.TableDef;
+import com.lxrin.ql.table.Column;
+
+public class PersonTable extends TableDef {
+    public final Column personNr   = column("PERSON_NR");
+    public final Column firstName  = column("FIRST_NAME");
+    public final Column lastName   = column("LAST_NAME");
+    public final Column status     = column("STATUS");
+    public final Column age        = column("AGE");
+
+    public PersonTable() {
+        super("PERSON", "t");   // table name, alias
+    }
+}
+```
+
+Column aliases are auto-derived: `FIRST_NAME` → `firstName`, `PERSON_NR` → `personNr`.
+
+### Step 2 — Query with typed columns and typed binds
 
 ```java
 import static com.lxrin.ql.LxrinQL.*;
 
+PersonTable t = new PersonTable();
+
+Binds b = new Binds()
+    .setString("status", "ACTIVE")
+    .setInt("minAge", 18);
+
 List<PersonBean> people = createContribution(PersonBean.class)
-    .from("PERSON t")
-    .select("t.ID",         "id")
-    .select("t.FIRST_NAME", "firstName")
-    .select("t.LAST_NAME",  "lastName")
-    .join("LEFT JOIN ADDRESS a ON a.PERSON_ID = t.ID")
-    .where(eq("t.STATUS", ":status"), and(), ge("t.AGE", ":minAge"))
-    .bind("status", "ACTIVE")
-    .bind("minAge", 18)
+    .from(t)
+    .select(t.personNr)
+    .select(t.firstName)
+    .select(t.lastName)
+    .join("LEFT JOIN ADDRESS a ON a.PERSON_NR = t.PERSON_NR")
+    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
+    .bind(b)
     .mapWith(row -> {
         PersonBean p = new PersonBean();
-        p.setId((Long)   row[0]);
+        p.setPersonNr((Long)   row[0]);
         p.setFirstName((String) row[1]);
         p.setLastName((String)  row[2]);
         return p;
@@ -88,7 +116,28 @@ List<PersonBean> people = createContribution(PersonBean.class)
     .multiple();
 ```
 
-### Fetching a single value
+### Step 3 — Populate Eclipse Scout table page data
+
+```java
+PersonTable t = new PersonTable();
+
+Binds b = new Binds().setString("status", "ACTIVE");
+
+selectInto(personTablePageData)
+    .from(t)
+    .select(t.personNr)
+    .select(t.firstName)
+    .select(t.lastName)
+    .where(eq(t.status, ":status"))
+    .bind(b)
+    .execute();
+// Generated: SELECT t.PERSON_NR, t.FIRST_NAME, t.LAST_NAME
+//            FROM PERSON t
+//            WHERE t.STATUS = :status
+//            INTO :personNr, :firstName, :lastName
+```
+
+### Fetching a single scalar value
 
 ```java
 Long count = createContribution(Long.class)
@@ -99,40 +148,106 @@ Long count = createContribution(Long.class)
     .single();
 ```
 
-### Eclipse Scout `selectInto` (table page data)
+---
+
+## `Binds` — Typed Bind Parameters
+
+`Binds` is a mutable, chainable container for named SQL parameters. Use it instead of multiple `.bind(name, value)` calls.
 
 ```java
-selectInto(myTablePageData)
+Binds b = new Binds()
+    .setLong("personNr",  getPersonNr())   // Long
+    .setString("status",  "ACTIVE")        // String
+    .setInt("minAge",     18)              // Integer
+    .setBoolean("active", true)            // Boolean
+    .setDate("since",     LocalDate.now()) // LocalDate
+    .setBigDecimal("min", new BigDecimal("9.99")); // BigDecimal
+
+// Pass to any builder:
+createContribution(PersonBean.class)
     .from("PERSON t")
-    .select("t.ID",         "id")
-    .select("t.FIRST_NAME", "firstName")
-    .where(eq("t.STATUS", ":status"))
-    .bind("status", "ACTIVE")
-    .execute();
+    .bind(b)
+    .multiple();
+```
+
+| Method | Type |
+|--------|------|
+| `setLong(name, Long)` | `Long` |
+| `setInt(name, Integer)` | `Integer` |
+| `setDouble(name, Double)` | `Double` |
+| `setBigDecimal(name, BigDecimal)` | `BigDecimal` |
+| `setString(name, String)` | `String` |
+| `setBoolean(name, Boolean)` | `Boolean` |
+| `setDate(name, LocalDate)` | `LocalDate` |
+| `setDateTime(name, LocalDateTime)` | `LocalDateTime` |
+| `set(name, Object)` | generic fallback |
+
+---
+
+## `TableDef` — Typed Table Definitions
+
+Define a class per database table. Columns are declared as `public final Column` fields.
+
+```java
+public class OrderTable extends TableDef {
+    public final Column orderId    = column("ORDER_ID");
+    public final Column customerId = column("CUSTOMER_ID");
+    public final Column total      = column("TOTAL");
+    public final Column status     = column("STATUS");
+    public final Column createdAt  = column("CREATED_AT");
+
+    public OrderTable() {
+        super("ORDERS", "o");
+    }
+}
+```
+
+Use it in a query:
+
+```java
+OrderTable o = new OrderTable();
+Binds b = new Binds().setString("status", "ACTIVE");
+
+List<OrderBean> orders = createContribution(OrderBean.class)
+    .from(o)
+    .select(o.orderId)
+    .select(o.total)
+    .where(eq(o.status, ":status"))
+    .bind(b)
+    .mapWith(row -> new OrderBean((Long) row[0], (Double) row[1]))
+    .multiple();
+```
+
+Conditions accept both `Column` and `String`:
+```java
+.where(eq(o.status, ":status"))       // Column overload
+.where(eq("o.STATUS", ":status"))     // String overload (still works)
 ```
 
 ---
 
 ## Condition Reference
 
-| Method                                    | SQL Output                  |
-|-------------------------------------------|-----------------------------|
-| `eq("col", ":val")`                       | `col = :val`                |
-| `ne("col", ":val")`                       | `col <> :val`               |
-| `gt("col", ":val")`                       | `col > :val`                |
-| `lt("col", ":val")`                       | `col < :val`                |
-| `ge("col", ":val")`                       | `col >= :val`               |
-| `le("col", ":val")`                       | `col <= :val`               |
-| `like("col", ":val")`                     | `col LIKE :val`             |
-| `ilike("col", ":val")`                    | `col ILIKE :val`            |
-| `in("col", ":v1", ":v2")`                 | `col IN (:v1, :v2)`         |
-| `between("col", ":from", ":to")`          | `col BETWEEN :from AND :to` |
-| `isNull("col")`                           | `col IS NULL`               |
-| `isNotNull("col")`                        | `col IS NOT NULL`           |
-| `not(eq("col", ":val"))`                  | `NOT (col = :val)`          |
-| `group(eq("a",":x"), or(), gt("b",":y"))` | `(a = :x OR b > :y)`        |
-| `and()`                                   | `AND`                       |
-| `or()`                                    | `OR`                        |
+All conditions work with both `String` column names and `Column` objects.
+
+| Method | SQL Output |
+|--------|-----------|
+| `eq(col, ":val")` | `col = :val` |
+| `ne(col, ":val")` | `col <> :val` |
+| `gt(col, ":val")` | `col > :val` |
+| `lt(col, ":val")` | `col < :val` |
+| `ge(col, ":val")` | `col >= :val` |
+| `le(col, ":val")` | `col <= :val` |
+| `like(col, ":val")` | `col LIKE :val` |
+| `ilike(col, ":val")` | `col ILIKE :val` |
+| `in(col, ":v1", ":v2")` | `col IN (:v1, :v2)` |
+| `between(col, ":from", ":to")` | `col BETWEEN :from AND :to` |
+| `isNull(col)` | `col IS NULL` |
+| `isNotNull(col)` | `col IS NOT NULL` |
+| `not(eq(col, ":val"))` | `NOT (col = :val)` |
+| `group(eq(col,":x"), or(), gt(col2,":y"))` | `(col = :x OR col2 > :y)` |
+| `and()` | `AND` |
+| `or()` | `OR` |
 
 ---
 
@@ -142,7 +257,8 @@ selectInto(myTablePageData)
 mvn test
 ```
 
-Tests use Mockito to mock `ISqlExecutor` — no database required.
+Tests use Mockito to mock `ISqlExecutor` — no database required.  
+66 tests covering `QueryBuilder`, `SelectIntoBuilder`, `Conditions`, `Binds`, and `TableDef`.
 
 ---
 
@@ -152,6 +268,17 @@ Tests use Mockito to mock `ISqlExecutor` — no database required.
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Commit your changes
 4. Open a pull request
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [WIKI.md](WIKI.md) | Architecture, full API reference, integration guide, FAQ |
+| [Getting Started](docs/getting-started.md) | Step-by-step setup guide |
+| [API Reference](docs/api-reference.md) | Complete method listing |
+| [Examples](docs/examples.md) | Real-world usage patterns |
 
 ---
 

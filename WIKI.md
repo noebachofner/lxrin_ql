@@ -1,7 +1,7 @@
 # LxrinQL Wiki
 
 > Comprehensive guide to the **LxrinQL** fluent query-builder library for Eclipse Scout.
-> 
+>
 > ⚠️ _This project is AI-generated._
 
 ---
@@ -15,7 +15,10 @@
    - [QueryBuilder](#querybuilder)
    - [SelectIntoBuilder](#selectintobuilder)
    - [Conditions](#conditions)
+   - [Binds](#binds)
    - [BindMap](#bindmap)
+   - [TableDef](#tabledef)
+   - [Column](#column)
    - [ISqlExecutor](#isqlexecutor)
 4. [Integration with Eclipse Scout](#integration-with-eclipse-scout)
 5. [PostgreSQL Tips](#postgresql-tips)
@@ -29,6 +32,8 @@
 LxrinQL eliminates manual SQL string concatenation when working with Eclipse Scout's `SQL` service. It provides:
 
 - A fluent Java API that composes SQL at runtime
+- **Typed table definitions** — define columns once as Java fields and reference them as `table.column` instead of `"alias.COLUMN_NAME"` strings
+- **Typed bind parameters** — `Binds` class with `setLong`, `setString`, etc. instead of untyped `Object` values
 - Full support for named bind parameters (`:name` syntax)
 - Both `select` (returns `Object[][]`) and `selectInto` (fills Scout table page data)
 - An injectable `ISqlExecutor` interface for unit testing without a database
@@ -39,24 +44,30 @@ LxrinQL eliminates manual SQL string concatenation when working with Eclipse Sco
 
 ```
 LxrinQL (static factory)
-├── QueryBuilder<T>        → SELECT … FROM … JOIN … WHERE …
-│   ├── BindMap            → named parameters
-│   ├── Condition          → WHERE clause fragments
-│   └── ISqlExecutor       → SQL execution abstraction
-│       └── ScoutSqlExecutor (default, delegates to Scout SQL service)
-└── SelectIntoBuilder      → SELECT … FROM … WHERE … INTO …
-    ├── BindMap
+├── QueryBuilder<T>          → SELECT … FROM … JOIN … WHERE …
+│   ├── Binds / BindMap      → named parameters (typed or generic)
+│   ├── Condition            → WHERE clause fragments
+│   └── ISqlExecutor         → SQL execution abstraction
+│       └── ScoutSqlExecutor (default – delegates to Scout SQL service)
+└── SelectIntoBuilder        → SELECT … FROM … WHERE … INTO …
+    ├── Binds / BindMap
     ├── Condition
     └── ISqlExecutor
+
+table package
+├── TableDef (abstract)      → base class for typed table definitions
+└── Column                   → strongly-typed column reference (SQL expr + alias)
 ```
 
 ### Key design decisions
 
 | Decision | Rationale |
 |----------|-----------|
+| `TableDef` + `Column` | Eliminates raw SQL strings for table/column names; IDE refactoring safe |
+| `Binds` mutable class | Natural imperative style — `b.setLong("id", getPersonNr())` |
+| `BindMap` copy-on-write | Functional style; supports safe re-use of partially built queries |
 | `Condition` is an interface | Allows custom conditions via lambdas |
-| `BindMap` is copy-on-write | Supports safe re-use of partially built queries |
-| `ISqlExecutor` is injected | Enables Mockito-based unit testing |
+| `ISqlExecutor` is injected | Enables Mockito-based unit testing without a database |
 | `LogicalOperator` as explicit `Condition` | Keeps the API consistent — no hidden AND insertion |
 
 ---
@@ -74,23 +85,27 @@ import static com.lxrin.ql.LxrinQL.*;
 | `createContribution(Class<T>)` | Creates a `QueryBuilder<T>` |
 | `createContribution(Class<?>, Class<T>)` | Two-arg overload; first arg (collection type) is ignored |
 | `selectInto(Object tableData)` | Creates a `SelectIntoBuilder` |
-| All `Conditions.*` methods | Re-exported for single-import convenience |
+| All `Conditions.*` string methods | Re-exported for single-import convenience |
+| All `Conditions.*` `Column` overloads | Re-exported — use with `TableDef` columns |
 
 ---
 
 ### QueryBuilder
 
-Chain methods, then call a terminal operation.
+Chain builder methods, then call a terminal operation.
 
-#### Configuration methods
+#### Builder methods
 
 | Method | Description |
 |--------|-------------|
-| `.from(String table)` | Sets the FROM clause, e.g. `"MY_TABLE t"` |
-| `.select(String expr, String alias)` | Adds a SELECT column |
+| `.from(TableDef table)` | FROM clause from a typed table definition |
+| `.from(String table)` | FROM clause as a raw string, e.g. `"MY_TABLE t"` |
+| `.select(Column column)` | Adds a SELECT column from a `TableDef` field |
+| `.select(String expr, String alias)` | Adds a SELECT column with a raw expression |
 | `.join(String clause)` | Appends a JOIN clause verbatim |
 | `.where(Condition...)` | Adds WHERE conditions |
-| `.bind(String name, Object value)` | Adds a named bind parameter |
+| `.bind(Binds binds)` | Merges all entries from a `Binds` object |
+| `.bind(String name, Object value)` | Adds a single named bind parameter |
 | `.mapWith(RowMapper<T>)` | Sets the row-to-object mapper |
 | `.executor(ISqlExecutor)` | Overrides the SQL executor (testing) |
 
@@ -105,11 +120,17 @@ Chain methods, then call a terminal operation.
 #### Example
 
 ```java
+PersonTable t = new PersonTable();
+
+Binds b = new Binds()
+    .setString("status", "ACTIVE")
+    .setInt("minAge", 18);
+
 List<String> names = createContribution(String.class)
-    .from("PERSON t")
-    .select("t.NAME", "name")
-    .where(eq("t.ACTIVE", ":active"))
-    .bind("active", true)
+    .from(t)
+    .select(t.firstName)
+    .where(eq(t.status, ":status"), and(), ge(t.age, ":minAge"))
+    .bind(b)
     .mapWith(row -> (String) row[0])
     .multiple();
 ```
@@ -120,18 +141,21 @@ List<String> names = createContribution(String.class)
 
 Builds `SELECT … INTO` statements for Eclipse Scout table page data.
 
-#### Configuration methods
+#### Builder methods
 
 | Method | Description |
 |--------|-------------|
-| `.from(String table)` | Sets the FROM clause |
-| `.select(String expr, String intoAlias)` | Adds SELECT column + INTO alias |
+| `.from(TableDef table)` | FROM clause from a typed table definition |
+| `.from(String table)` | FROM clause as a raw string |
+| `.select(Column column)` | SELECT + INTO alias from a `TableDef` column |
+| `.select(String expr, String intoAlias)` | SELECT + INTO alias with raw strings |
 | `.join(String clause)` | Appends a JOIN clause |
 | `.where(Condition...)` | Adds WHERE conditions |
-| `.bind(String name, Object value)` | Adds a named bind parameter |
+| `.bind(Binds binds)` | Merges all entries from a `Binds` object |
+| `.bind(String name, Object value)` | Adds a single named bind parameter |
 | `.executor(ISqlExecutor)` | Overrides the SQL executor |
 
-#### Terminal method
+#### Terminal methods
 
 | Method | Description |
 |--------|-------------|
@@ -141,22 +165,26 @@ Builds `SELECT … INTO` statements for Eclipse Scout table page data.
 #### Example
 
 ```java
+PersonTable t = new PersonTable();
+
+Binds b = new Binds().setString("status", "ACTIVE");
+
 LxrinQL.selectInto(personTableData)
-    .from("PERSON t")
-    .select("t.ID",    "id")
-    .select("t.NAME",  "name")
-    .select("t.EMAIL", "email")
-    .where(eq("t.STATUS", ":status"))
-    .bind("status", "ACTIVE")
+    .from(t)
+    .select(t.personNr)
+    .select(t.firstName)
+    .select(t.lastName)
+    .where(eq(t.status, ":status"))
+    .bind(b)
     .execute();
 ```
 
 Generated SQL:
 ```sql
-SELECT t.ID, t.NAME, t.EMAIL
+SELECT t.PERSON_NR, t.FIRST_NAME, t.LAST_NAME
 FROM PERSON t
 WHERE t.STATUS = :status
-INTO :id, :name, :email
+INTO :personNr, :firstName, :lastName
 ```
 
 ---
@@ -165,40 +193,44 @@ INTO :id, :name, :email
 
 Import with `import static com.lxrin.ql.condition.Conditions.*;` or use `LxrinQL.*`.
 
+All methods come in two overloads:
+- `eq(String column, String value)` — raw SQL string
+- `eq(Column column, String value)` — typed `Column` from a `TableDef`
+
 #### Comparison
 
 ```java
-eq("col", ":val")    // col = :val
-ne("col", ":val")    // col <> :val
-gt("col", ":val")    // col > :val
-lt("col", ":val")    // col < :val
-ge("col", ":val")    // col >= :val
-le("col", ":val")    // col <= :val
-like("col", ":val")  // col LIKE :val
-ilike("col", ":val") // col ILIKE :val  (PostgreSQL)
+eq(col, ":val")    // col = :val
+ne(col, ":val")    // col <> :val
+gt(col, ":val")    // col > :val
+lt(col, ":val")    // col < :val
+ge(col, ":val")    // col >= :val
+le(col, ":val")    // col <= :val
+like(col, ":val")  // col LIKE :val
+ilike(col, ":val") // col ILIKE :val  (PostgreSQL)
 ```
 
 #### Set membership
 
 ```java
-in("col", ":v1", ":v2", ":v3")          // col IN (:v1, :v2, :v3)
-between("col", ":from", ":to")           // col BETWEEN :from AND :to
+in(col, ":v1", ":v2", ":v3")   // col IN (:v1, :v2, :v3)
+between(col, ":from", ":to")   // col BETWEEN :from AND :to
 ```
 
 #### Null checks
 
 ```java
-isNull("col")     // col IS NULL
-isNotNull("col")  // col IS NOT NULL
+isNull(col)     // col IS NULL
+isNotNull(col)  // col IS NOT NULL
 ```
 
 #### Logic
 
 ```java
-and()             // AND
-or()              // OR
-not(eq("c",":v")) // NOT (c = :v)
-group(eq("a",":x"), or(), gt("b",":y"))  // (a = :x OR b > :y)
+and()                                    // AND
+or()                                     // OR
+not(eq(col, ":v"))                       // NOT (col = :v)
+group(eq(col, ":x"), or(), gt(col2, ":y")) // (col = :x OR col2 > :y)
 ```
 
 #### Custom conditions (lambda)
@@ -210,9 +242,53 @@ builder.where(custom);
 
 ---
 
+### Binds
+
+`com.lxrin.ql.bind.Binds`
+
+Typed, mutable container for named SQL bind parameters. Supports method chaining.
+
+```java
+Binds b = new Binds()
+    .setLong("personNr",  getPersonNr())
+    .setString("status",  "ACTIVE")
+    .setInt("minAge",     18)
+    .setBoolean("active", true)
+    .setDate("since",     LocalDate.now())
+    .setDateTime("before", LocalDateTime.now())
+    .setBigDecimal("min", new BigDecimal("9.99"))
+    .setDouble("rate",    0.05);
+
+// Pass to a builder:
+createContribution(PersonBean.class)
+    .from("PERSON t")
+    .bind(b)
+    .multiple();
+```
+
+| Method | Stored type |
+|--------|------------|
+| `setLong(name, Long)` | `Long` |
+| `setInt(name, Integer)` | `Integer` |
+| `setDouble(name, Double)` | `Double` |
+| `setBigDecimal(name, BigDecimal)` | `BigDecimal` |
+| `setString(name, String)` | `String` |
+| `setBoolean(name, Boolean)` | `Boolean` |
+| `setDate(name, LocalDate)` | `LocalDate` |
+| `setDateTime(name, LocalDateTime)` | `LocalDateTime` |
+| `set(name, Object)` | generic fallback |
+| `get(name)` | reads a stored value |
+| `asMap()` | unmodifiable `Map<String, Object>` |
+| `toBindMap()` | snapshot as `BindMap` |
+| `isEmpty()` | `true` if no entries |
+
+---
+
 ### BindMap
 
-`BindMap` is a copy-on-write map of named SQL parameters.
+`com.lxrin.ql.bind.BindMap`
+
+Copy-on-write (immutable) map of named SQL parameters. Used internally by the builders; also useful for functional / pre-built bind configurations.
 
 ```java
 BindMap binds = new BindMap()
@@ -224,9 +300,61 @@ binds.asMap();         // unmodifiable Map<String, Object>
 binds.isEmpty();       // false
 ```
 
+> **Tip:** Prefer `Binds` for everyday use. Use `BindMap` only when you need immutable/functional semantics.
+
+---
+
+### TableDef
+
+`com.lxrin.ql.table.TableDef`
+
+Abstract base class for typed table definitions. Subclass once per database table.
+
+```java
+public class ProductTable extends TableDef {
+    public final Column productNr = column("PRODUCT_NR"); // alias → "productNr"
+    public final Column name      = column("NAME");        // alias → "name"
+    public final Column price     = column("PRICE");       // alias → "price"
+    // Explicit alias override:
+    public final Column vendorRef = column("VENDOR_FK", "vendorId");
+
+    public ProductTable() {
+        super("PRODUCT", "p");  // table name, SQL alias
+    }
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `column(String columnName)` | Protected. Creates a `Column`; auto-derives camelCase alias |
+| `column(String columnName, String alias)` | Protected. Creates a `Column` with an explicit alias |
+| `toFromSql()` | Returns `"TABLE_NAME alias"` for the FROM clause |
+| `getTableName()` | Returns the raw table name |
+| `getAlias()` | Returns the table alias |
+
+**Auto-alias examples:** `PRODUCT_NR` → `productNr`, `FIRST_NAME` → `firstName`, `ID` → `id`.
+
+---
+
+### Column
+
+`com.lxrin.ql.table.Column`
+
+Strongly-typed column reference created by `TableDef.column(…)`.
+
+| Method | Description |
+|--------|-------------|
+| `toSql()` | Returns the SQL expression, e.g. `"p.PRODUCT_NR"` |
+| `getAlias()` | Returns the Java alias, e.g. `"productNr"` |
+| `toString()` | Same as `toSql()` |
+
+Pass a `Column` anywhere a `String` column name is expected in the builder or condition methods.
+
 ---
 
 ### ISqlExecutor
+
+`com.lxrin.ql.sql.ISqlExecutor`
 
 ```java
 public interface ISqlExecutor {
@@ -242,26 +370,41 @@ The default implementation `ScoutSqlExecutor` delegates to `org.eclipse.scout.rt
 
 ## Integration with Eclipse Scout
 
+### Recommended project layout
+
+```
+src/main/java/com/example/
+├── tables/
+│   ├── PersonTable.java      ← extends TableDef
+│   ├── OrderTable.java
+│   └── ProductTable.java
+└── services/
+    └── PersonService.java    ← uses LxrinQL
+```
+
 ### Service method example
 
 ```java
 @Override
 public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
     PersonTablePageData pageData = new PersonTablePageData();
+    PersonTable t = new PersonTable();
+
+    Binds b = new Binds()
+        .setString("status",   "ACTIVE")
+        .setString("lastName", "%" + filter.getLastName().getValue() + "%");
 
     LxrinQL.selectInto(pageData)
-        .from("PERSON t")
-        .select("t.PERSON_ID",  "personId")
-        .select("t.FIRST_NAME", "firstName")
-        .select("t.LAST_NAME",  "lastName")
-        .select("t.EMAIL",      "email")
+        .from(t)
+        .select(t.personNr)
+        .select(t.firstName)
+        .select(t.lastName)
         .where(
-            eq("t.STATUS", ":status"),
+            eq(t.status, ":status"),
             and(),
-            ilike("t.LAST_NAME", ":lastName")
+            ilike(t.lastName, ":lastName")
         )
-        .bind("status",   "ACTIVE")
-        .bind("lastName", "%" + filter.getLastName().getValue() + "%")
+        .bind(b)
         .execute();
 
     return pageData;
@@ -273,12 +416,18 @@ public PersonTablePageData getPersonTableData(PersonSearchFormData filter) {
 ```java
 @Override
 protected void execLoadData(ILookupCall<Long> call) {
+    CategoryTable c = new CategoryTable();
+
+    Binds b = new Binds()
+        .setBoolean("active", true)
+        .setString("text", "%" + call.getText() + "%");
+
     List<ILookupRow<Long>> rows = LxrinQL.createContribution(ILookupRow.class)
-        .from("CATEGORY t")
-        .select("t.ID",   "key")
-        .select("t.NAME", "text")
-        .where(eq("t.ACTIVE", ":active"))
-        .bind("active", true)
+        .from(c)
+        .select(c.categoryId)
+        .select(c.name)
+        .where(eq(c.active, ":active"), and(), ilike(c.name, ":text"))
+        .bind(b)
         .mapWith(row -> new LookupRow<>((Long) row[0], (String) row[1]))
         .multiple();
 
@@ -286,14 +435,21 @@ protected void execLoadData(ILookupCall<Long> call) {
 }
 ```
 
+### Adding LxrinQL as a JAR to your Scout module
+
+1. Run `mvn install -DskipTests` in the LxrinQL project root.
+2. Add the dependency in your Scout server module's `pom.xml` (see Installation section in README).
+3. Eclipse Scout RT is already available as `provided` — no extra steps needed.
+
 ---
 
 ## PostgreSQL Tips
 
-- Use `ilike` for case-insensitive search: `ilike("t.NAME", ":name")`
-- Use `between` for date ranges: `between("t.CREATED_AT", ":from", ":to")`
+- Use `ilike` for case-insensitive search: `ilike(t.name, ":name")`
+- Use `between` for date ranges: `between(t.createdAt, ":from", ":to")`
 - For array contains, write a custom condition: `() -> "t.TAGS @> ARRAY[:tag]::text[]"`
-- Bind `null` to skip optional filters on the database side (use Scout's `{? ... }` syntax in combination)
+- Bind `null` to skip optional filters on the database side (use Scout's `{? … }` syntax in combination)
+- Use `setDate` / `setDateTime` in `Binds` to pass proper `LocalDate` / `LocalDateTime` values — Scout's JDBC layer converts them correctly for PostgreSQL
 
 ---
 
@@ -308,9 +464,14 @@ void testPersonQuery() {
     when(executor.select(anyString(), any()))
         .thenReturn(new Object[][]{{1L, "Alice"}, {2L, "Bob"}});
 
+    PersonTable t = new PersonTable();
+    Binds b = new Binds().setString("status", "ACTIVE");
+
     List<String> names = LxrinQL.createContribution(String.class)
-        .from("PERSON t")
-        .select("t.NAME", "name")
+        .from(t)
+        .select(t.firstName)
+        .where(eq(t.status, ":status"))
+        .bind(b)
         .executor(executor)
         .mapWith(row -> (String) row[0])
         .multiple();
@@ -324,13 +485,15 @@ void testPersonQuery() {
 ```java
 @Test
 void testSqlGeneration() {
+    PersonTable t = new PersonTable();
+
     String sql = LxrinQL.createContribution(Object[].class)
-        .from("PERSON t")
-        .select("t.ID", "id")
-        .where(eq("t.STATUS", ":status"))
+        .from(t)
+        .select(t.personNr)
+        .where(eq(t.status, ":status"))
         .buildSql();
 
-    assertEquals("SELECT t.ID FROM PERSON t WHERE t.STATUS = :status", sql);
+    assertEquals("SELECT t.PERSON_NR FROM PERSON t WHERE t.STATUS = :status", sql);
 }
 ```
 
@@ -338,6 +501,7 @@ void testSqlGeneration() {
 
 ```bash
 mvn test
+# 66 tests — no database required
 ```
 
 ---
@@ -345,24 +509,42 @@ mvn test
 ## FAQ
 
 **Q: Does LxrinQL support INSERT/UPDATE/DELETE?**  
-A: `ISqlExecutor.execute()` exists for DML statements, but the fluent builder currently focuses on SELECT. You can call `executor.execute(sql, binds)` directly for DML.
+A: `ISqlExecutor.execute()` exists for DML statements, but the fluent builder currently focuses on SELECT. Call `executor.execute(sql, binds.toBindMap())` directly for DML.
 
 **Q: Can I use LxrinQL without Eclipse Scout?**  
 A: Yes — implement `ISqlExecutor` yourself to delegate to plain JDBC or any other SQL library.
 
 **Q: Does LxrinQL prevent SQL injection?**  
-A: LxrinQL uses Scout's named bind parameters (`:name`), which are parameterized. Column names and table names in `.from()`, `.select()`, `.join()` are not escaped — never pass user input there.
+A: LxrinQL uses Scout's named bind parameters (`:name`), which are parameterized. Column names and table names in `TableDef`, `.from()`, `.join()` are not escaped — never pass user input there.
+
+**Q: Should I use `Binds` or `BindMap`?**  
+A: Use `Binds` in all normal cases. It is mutable and has type-specific setters. Use `BindMap` only if you need immutable/copy-on-write semantics (e.g. building shared base queries).
+
+**Q: How does the auto-alias work in `TableDef`?**  
+A: `column("PRODUCT_NR")` splits on `_`, lowercases everything, and capitalises each subsequent word: `product` + `Nr` → `productNr`. Use `column("COLUMN", "myAlias")` to override.
 
 **Q: Can I reuse a partially built query?**  
-A: Yes. `BindMap` is copy-on-write, so storing a `QueryBuilder` reference and calling `.bind()` multiple times is safe.
+A: Yes. `BindMap` is copy-on-write, so storing a `QueryBuilder` reference and calling `.bind()` multiple times is safe. With `Binds`, create a new instance per request.
 
 **Q: How do I handle optional filters?**  
 A: Build conditions conditionally before calling `.where()`:
 
 ```java
-QueryBuilder<MyBean> qb = createContribution(MyBean.class).from("T").select("T.ID","id");
+PersonTable t = new PersonTable();
+var qb = createContribution(PersonBean.class).from(t).select(t.personNr);
+Binds b = new Binds();
 List<Condition> conds = new ArrayList<>();
-if (status != null) { conds.add(eq("T.STATUS", ":status")); qb.bind("status", status); }
+
+if (status != null) {
+    conds.add(eq(t.status, ":status"));
+    b.setString("status", status);
+}
+if (lastName != null && !lastName.isBlank()) {
+    if (!conds.isEmpty()) conds.add(and());
+    conds.add(ilike(t.lastName, ":lastName"));
+    b.setString("lastName", "%" + lastName + "%");
+}
+
 if (!conds.isEmpty()) qb.where(conds.toArray(new Condition[0]));
-List<MyBean> result = qb.multiple();
+List<PersonBean> result = qb.bind(b).multiple();
 ```
