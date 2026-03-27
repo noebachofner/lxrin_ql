@@ -156,15 +156,16 @@ public class QueryBuilder<T> {
 
     /**
      * Sets the {@link RowMapper} used to convert result rows to {@code T}.
-     * <p>
-     * If no mapper is set:
+     * <p>If no mapper is set:</p>
      * <ul>
      *   <li>{@link #single()} returns the first column of the first row cast
      *       to {@code T}.</li>
      *   <li>{@link #multiple()} returns a {@code List<Object[]>} cast unsafely
      *       to {@code List<T>}.</li>
      * </ul>
-     * </p>
+     *
+     * @param rowMapper mapper implementation used for each result row
+     * @return this builder instance
      */
     public QueryBuilder<T> mapWith(RowMapper<T> rowMapper) {
         this.rowMapper = rowMapper;
