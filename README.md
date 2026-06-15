@@ -340,3 +340,6 @@ Tests use Mockito to mock `ISqlExecutor` — no database required.
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+## Important
+This Project was created with Claude AI. Nothing is coded by hand!
